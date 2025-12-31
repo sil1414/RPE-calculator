@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SBD RPE Dash</title>
+    <style>
+        :root {
+            --primary: #007AFF;
+            --bg: #F2F2F7;
+            --card: #FFFFFF;
+            --text: #000000;
+            --border: #C6C6C8;
+        }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; padding: 0; color: var(--text); padding-bottom: 100px; }
+        
+        /* Fixed Header */
+        .header {
+            position: sticky; top: 0; background: rgba(242, 242, 247, 0.8);
+            backdrop-filter: blur(15px); padding: 15px 20px; z-index: 100; border-bottom: 0.5px solid var(--border);
+        }
+        h1 { font-size: 22px; margin: 0 0 10px 0; }
+        
+        .rpe-selector-container { display: flex; align-items: center; gap: 10px; }
+        .rpe-selector-container label { font-weight: bold; font-size: 14px; }
+        select {
+            flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+            font-size: 16px; background: var(--card);
+        }
+
+        /* Tabs */
+        .tab-bar {
+            position: fixed; bottom: 0; width: 100%; height: 70px;
+            background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px);
+            display: flex; border-top: 0.5px solid var(--border); padding-bottom: env(safe-area-inset-bottom);
+        }
+        .tab-item { flex: 1; text-align: center; padding: 10px; color: #8E8E93; text-decoration: none; font-size: 12px; }
+        .tab-item.active { color: var(--primary); }
+
+        /* Views */
+        .view { display: none; padding: 10px; }
+        .view.active { display: block; }
+
+        /* SBD Dashboard Table */
+        .sbd-card { background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .dash-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        .dash-table th { background: #F8F8F8; padding: 12px 5px; font-size: 12px; border-bottom: 1px solid var(--bg); }
+        .dash-table td { padding: 12px 5px; text-align: center; border-bottom: 0.5px solid var(--bg); font-size: 15px; }
+        .rep-col { background: #FDFDFD; font-weight: bold; color: #666; width: 50px; }
+        .val-sq { color: #E91E63; font-weight: bold; }
+        .val-bp { color: #2196F3; font-weight: bold; }
+        .val-dl { color: #4CAF50; font-weight: bold; }
+
+        /* Settings Style */
+        .settings-group { background: var(--card); border-radius: 12px; padding: 15px; margin-top: 10px; }
+        .settings-input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        .save-btn { width: 100%; padding: 15px; background: var(--primary); color: white; border: none; border-radius: 10px; font-weight: bold; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div id="view-calc" class="view active">
+    <div class="header">
+        <h1>SBD 一覧表示</h1>
+        <div class="rpe-selector-container">
+            <label>選択RPE:</label>
+            <select id="rpe-select" onchange="calculate()">
+                </select>
+        </div>
+    </div>
+
+    <div class="sbd-card">
+        <table class="dash-table">
+            <thead>
+                <tr>
+                    <th class="rep-col">Reps</th>
+                    <th>SQ</th>
+                    <th>BP</th>
+                    <th>DL</th>
+                </tr>
+            </thead>
+            <tbody id="dash-body">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="view-settings" class="view">
+    <div style="padding:15px;">
+        <h1>MAX設定</h1>
+        <div class="settings-group">
+            <label>SQ MAX (kg)</label>
+            <input type="number" id="set-sq" class="settings-input" step="0.5">
+            <label>BP MAX (kg)</label>
+            <input type="number" id="set-bp" class="settings-input" step="0.5">
+            <label>DL MAX (kg)</label>
+            <input type="number" id="set-dl" class="settings-input" step="0.5">
+            <button class="save-btn" onclick="saveData()">設定を保存</button>
+        </div>
+    </div>
+</div>
+
+<div class="tab-bar">
+    <a href="javascript:void(0)" class="tab-item active" id="tab-calc" onclick="showView('calc')">📊 計算</a>
+    <a href="javascript:void(0)" class="tab-item" id="tab-settings" onclick="showView('settings')">⚙️ 設定</a>
+</div>
+
+<script>
+    // RPEチャート近似データ (100%基準)
+    const baseTable = {
+        10: [100.0, 95.5, 92.2, 89.2, 86.3, 83.7, 81.1, 78.6, 76.2, 73.9],
+        9.5:[ 97.8, 93.9, 90.7, 87.8, 85.0, 82.4, 79.9, 77.4, 75.1, 72.3],
+        9:  [ 95.5, 92.2, 89.2, 86.3, 83.7, 81.1, 78.6, 76.2, 73.9, 70.7],
+        8.5:[ 93.9, 90.7, 87.8, 85.0, 82.4, 79.9, 77.4, 75.1, 72.3, 69.4],
+        8:  [ 92.2, 89.2, 86.3, 83.7, 81.1, 78.6, 76.2, 73.9, 70.7, 68.0],
+        7.5:[ 90.7, 87.8, 85.0, 82.4, 79.9, 77.4, 75.1, 72.3, 69.4, 66.7],
+        7:  [ 89.2, 86.3, 83.7, 81.1, 78.6, 76.2, 73.9, 70.7, 68.0, 65.3],
+        6.5:[ 87.8, 85.0, 82.4, 79.9, 77.4, 75.1, 72.3, 69.4, 66.7, 64.0],
+        6:  [ 86.3, 83.7, 81.1, 78.6, 76.2, 73.9, 70.7, 68.0, 65.3, 62.6],
+        5:  [ 81.1, 78.6, 76.2, 73.9, 70.7, 68.0, 65.3, 62.6, 60.1, 57.7],
+        4:  [ 76.2, 73.9, 70.7, 68.0, 65.3, 62.6, 60.1, 57.7, 55.4, 53.0],
+        3:  [ 70.7, 68.0, 65.3, 62.6, 60.1, 57.7, 55.4, 53.0, 50.5, 48.0],
+        2:  [ 65.3, 62.6, 60.1, 57.7, 55.4, 53.0, 50.5, 48.0, 45.0, 42.0],
+        1:  [ 60.1, 57.7, 55.4, 53.0, 50.5, 48.0, 45.0, 42.0, 39.0, 36.0]
+    };
+
+    let userMax = JSON.parse(localStorage.getItem('liftingMax_v2')) || { sq: 157.5, bp: 87.5, dl: 170 };
+
+    function init() {
+        // RPEセレクト生成 (0.5刻み)
+        const rpeSelect = document.getElementById('rpe-select');
+        const rpeList = [10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5, 4, 3, 2, 1];
+        rpeSelect.innerHTML = rpeList.map(v => `<option value="${v}" ${v==8?'selected':''}>RPE ${v}</option>`).join('');
+        
+        document.getElementById('set-sq').value = userMax.sq;
+        document.getElementById('set-bp').value = userMax.bp;
+        document.getElementById('set-dl').value = userMax.dl;
+        
+        calculate();
+    }
+
+    function calculate() {
+        const rpe = document.getElementById('rpe-select').value;
+        const pcts = baseTable[rpe];
+        const tbody = document.getElementById('dash-body');
+        tbody.innerHTML = '';
+
+        for (let i = 0; i < 10; i++) {
+            const reps = i + 1;
+            const p = pcts[i];
+            
+            const calcW = (max) => (Math.round((max * (p / 100)) / 2.5) * 2.5).toFixed(1);
+
+            tbody.innerHTML += `
+                <tr>
+                    <td class="rep-col">${reps}</td>
+                    <td class="val-sq">${calcW(userMax.sq)}</td>
+                    <td class="val-bp">${calcW(userMax.bp)}</td>
+                    <td class="val-dl">${calcW(userMax.dl)}</td>
+                </tr>
+            `;
+        }
+    }
+
+    function showView(viewName) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+        document.getElementById(`view-${viewName}`).classList.add('active');
+        document.getElementById(`tab-${viewName}`).classList.add('active');
+    }
+
+    function saveData() {
+        userMax.sq = parseFloat(document.getElementById('set-sq').value);
+        userMax.bp = parseFloat(document.getElementById('set-bp').value);
+        userMax.dl = parseFloat(document.getElementById('set-dl').value);
+        localStorage.setItem('liftingMax_v2', JSON.stringify(userMax));
+        alert("MAX重量を更新しました");
+        calculate();
+        showView('calc');
+    }
+
+    window.onload = init;
+</script>
+</body>
+</html>
