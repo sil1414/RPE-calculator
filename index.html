@@ -158,7 +158,7 @@ th, td {
 
     <div class="settings-row">
       <label>SQ</label>
-      <input id="set-sq" type="number" placeholder="150">
+      <input id="set-sq" type="number">
       <select id="step-sq">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -169,7 +169,7 @@ th, td {
 
     <div class="settings-row">
       <label>BP</label>
-      <input id="set-bp" type="number" placeholder="100">
+      <input id="set-bp" type="number">
       <select id="step-bp">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -180,7 +180,7 @@ th, td {
 
     <div class="settings-row">
       <label>DL</label>
-      <input id="set-dl" type="number" placeholder="150">
+      <input id="set-dl" type="number">
       <select id="step-dl">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -314,6 +314,20 @@ function renderPlateSettings(lift){
   });
 }
 
+function checkIncrementConflict(lift) {
+  const increment = userData.step[lift];
+  const plates = userData.plateConfig[lift];
+  if (!plates.length) return null;
+
+  const minPlate = Math.min(...plates);
+  const minStep = minPlate * 2;
+
+  if (increment % minStep !== 0) {
+    return `⚠️ ${lift.toUpperCase()}:\nIncrement ${increment}kg は\n最小プレート ${minPlate}kg 構成では刻めません`;
+  }
+  return null;
+}
+
 function saveData(){
   userData.max.sq=parseFloat(document.getElementById('set-sq').value);
   userData.max.bp=parseFloat(document.getElementById('set-bp').value);
@@ -329,6 +343,15 @@ function saveData(){
   });
 
   localStorage.setItem('liftingData_v4',JSON.stringify(userData));
+
+  const warnings = ['sq','bp','dl']
+    .map(checkIncrementConflict)
+    .filter(Boolean);
+
+  if (warnings.length) {
+    alert(warnings.join('\n\n'));
+  }
+
   calculate();
   showView('calc');
 }
