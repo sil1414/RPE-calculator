@@ -41,6 +41,7 @@ th, td {
   padding: 10px;
   text-align: center;
   border-bottom: 1px solid #eee;
+  vertical-align: top;
 }
 
 .rep-col { font-weight: bold; }
@@ -53,7 +54,12 @@ th, td {
 
 .plate-row {
   background: #fafafa;
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.warn {
+  color: #d32f2f;
+  font-weight: bold;
 }
 
 .settings-group {
@@ -68,6 +74,7 @@ th, td {
   grid-template-columns: 40px 1fr 1fr;
   gap: 10px;
   margin-bottom: 10px;
+  align-items: center;
 }
 
 .settings-header {
@@ -99,6 +106,7 @@ th, td {
   display: flex;
   background: #fff;
   border-top: 1px solid #ccc;
+  z-index: 1000;
 }
 
 .tab-item {
@@ -107,6 +115,7 @@ th, td {
   padding: 12px;
   color: #666;
   text-decoration: none;
+  user-select: none;
 }
 
 .tab-item.active { color: #007aff; }
@@ -158,7 +167,7 @@ th, td {
 
     <div class="settings-row">
       <label>SQ</label>
-      <input id="set-sq" type="number">
+      <input id="set-sq" type="number" inputmode="decimal">
       <select id="step-sq">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -169,7 +178,7 @@ th, td {
 
     <div class="settings-row">
       <label>BP</label>
-      <input id="set-bp" type="number">
+      <input id="set-bp" type="number" inputmode="decimal">
       <select id="step-bp">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -180,7 +189,7 @@ th, td {
 
     <div class="settings-row">
       <label>DL</label>
-      <input id="set-dl" type="number">
+      <input id="set-dl" type="number" inputmode="decimal">
       <select id="step-dl">
         <option value="0.5">0.5</option>
         <option value="1.0">1.0</option>
@@ -215,8 +224,7 @@ th, td {
 <script>
 const KG_TO_LB = 2.20462;
 const BAR_KG = 20;
-const BAR_LB = 45;
-const ALL_PLATES = [25,20,15,10,5,2.5,1.25,0.75,0.5];
+const ALL_PLATES = [25,20,15,10,5,2.5,1.25,0.75,0.5,0.25];
 
 const baseTable = {
   10:[100,95.5,92.2,89.2,86.3,83.7,81.1,78.6,76.2,73.9],
@@ -250,26 +258,47 @@ function getUnit() {
 }
 
 function displayWeight(kg) {
-  return getUnit()==='lb' ? (kg*KG_TO_LB).toFixed(1) : kg.toFixed(1);
+  return getUnit()==='lb' ? (kg*KG_TO_LB).toFixed(1) : kg.toFixed(2);
 }
 
 function calcKg(max, step, p) {
   return Math.round((max*p/100)/step)*step;
 }
 
-function calcPlates(totalKg, lift) {
-  const unit = getUnit();
-  const bar = unit==='lb'?BAR_LB:BAR_KG;
-  let total = unit==='lb'?totalKg*KG_TO_LB:totalKg;
-  let remain = (total-bar)/2;
+/* Plate assembly with deficit (kg-based). Also creates "missing plates" message using smallest available plate. */
+function calcPlatesAndDeficit(totalKg, lift){
+  let remain = (totalKg - BAR_KG) / 2;
+  const plates = (userData.plateConfig[lift] || []).slice().sort((a,b)=>b-a);
 
-  let plates = userData.plateConfig[lift].slice().sort((a,b)=>b-a);
-  let out=[];
-  plates.forEach(p=>{
-    let c=Math.floor(remain/p);
-    if(c>0){ out.push(`${p}${unit} ×${c*2}`); remain-=p*c; }
-  });
-  return out.join('<br>');
+  const used = [];
+  for (const p of plates){
+    const c = Math.floor(remain / p);
+    if (c > 0){
+      used.push(`${p}kg ×${c*2}`);
+      remain -= p * c;
+    }
+  }
+
+  const ok = Math.abs(remain) < 0.001;
+
+  let missingLines = [];
+  if (!ok && plates.length > 0){
+    const minPlate = Math.min(...plates);
+    const deficit = Math.max(0, remain); // should be >=0 in this greedy approach
+
+    // Minimum extra plates (per side) if ONLY minPlate existed
+    const perSideCount = Math.ceil((deficit - 1e-9) / minPlate);
+    const totalCount = Math.max(0, perSideCount * 2);
+
+    if (totalCount > 0){
+      missingLines.push(`⚠ Missing plates: ${minPlate}kg ×${totalCount}`);
+    } else {
+      missingLines.push(`⚠ Missing plates to complete this load.`);
+    }
+    missingLines.push(`Remaining: ${deficit.toFixed(2)}kg per side`);
+  }
+
+  return { used, remain, ok, missingLines };
 }
 
 function togglePlate(row){
@@ -280,82 +309,114 @@ function togglePlate(row){
   arrow.textContent = open ? '▶' : '▼';
 }
 
+/* ===== Core table render ===== */
 function calculate(){
   const rpe = document.getElementById('rpe-select').value;
-  const tbody=document.getElementById('dash-body');
-  tbody.innerHTML='';
-  baseTable[rpe].forEach((p,i)=>{
-    const wSq=calcKg(userData.max.sq,userData.step.sq,p);
-    const wBp=calcKg(userData.max.bp,userData.step.bp,p);
-    const wDl=calcKg(userData.max.dl,userData.step.dl,p);
-    tbody.innerHTML+=`
-    <tr onclick="togglePlate(this)">
-      <td class="rep-col"><span class="arrow">▶</span> ${i+1}</td>
-      <td>${displayWeight(wSq)}</td>
-      <td>${displayWeight(wBp)}</td>
-      <td>${displayWeight(wDl)}</td>
-    </tr>
-    <tr class="plate-row" style="display:none">
-      <td colspan="4">
-        SQ:<br>${calcPlates(wSq,'sq')}<br><br>
-        BP:<br>${calcPlates(wBp,'bp')}<br><br>
-        DL:<br>${calcPlates(wDl,'dl')}
-      </td>
-    </tr>`;
+  const tbody = document.getElementById('dash-body');
+  tbody.innerHTML = '';
+
+  baseTable[rpe].forEach((p,i) => {
+    const wSq = calcKg(userData.max.sq, userData.step.sq, p);
+    const wBp = calcKg(userData.max.bp, userData.step.bp, p);
+    const wDl = calcKg(userData.max.dl, userData.step.dl, p);
+
+    const sq = calcPlatesAndDeficit(wSq,'sq');
+    const bp = calcPlatesAndDeficit(wBp,'bp');
+    const dl = calcPlatesAndDeficit(wDl,'dl');
+
+    tbody.innerHTML += `
+      <tr onclick="togglePlate(this)">
+        <td class="rep-col"><span class="arrow">▶</span> ${i+1}</td>
+        <td class="${sq.ok ? '' : 'warn'}">${displayWeight(wSq)}${sq.ok ? '' : ' ❗'}</td>
+        <td class="${bp.ok ? '' : 'warn'}">${displayWeight(wBp)}${bp.ok ? '' : ' ❗'}</td>
+        <td class="${dl.ok ? '' : 'warn'}">${displayWeight(wDl)}${dl.ok ? '' : ' ❗'}</td>
+      </tr>
+
+      <!-- Responsive alignment: SAME table columns (Reps + SQ + BP + DL) -->
+      <tr class="plate-row" style="display:none">
+        <td></td>
+        <td>
+          ${sq.used.join('<br>')}
+          ${sq.ok ? '' : `<div class="warn" style="margin-top:6px">${sq.missingLines.join('<br>')}</div>`}
+        </td>
+        <td>
+          ${bp.used.join('<br>')}
+          ${bp.ok ? '' : `<div class="warn" style="margin-top:6px">${bp.missingLines.join('<br>')}</div>`}
+        </td>
+        <td>
+          ${dl.used.join('<br>')}
+          ${dl.ok ? '' : `<div class="warn" style="margin-top:6px">${dl.missingLines.join('<br>')}</div>`}
+        </td>
+      </tr>
+    `;
   });
 }
 
+/* ===== Settings UI ===== */
 function renderPlateSettings(lift){
-  const c=document.getElementById(`plates-${lift}`);
-  c.innerHTML='';
+  const c = document.getElementById(`plates-${lift}`);
+  c.innerHTML = '';
   ALL_PLATES.forEach(p=>{
-    const chk=userData.plateConfig[lift].includes(p)?'checked':'';
-    c.innerHTML+=`<label><input type="checkbox" value="${p}" ${chk}> ${p}kg</label>`;
+    const chk = (userData.plateConfig[lift] || []).includes(p) ? 'checked' : '';
+    c.innerHTML += `<label><input type="checkbox" value="${p}" ${chk}> ${p}kg</label>`;
   });
+}
+
+/* ===== Settings conflict check (SAVE ONLY) ===== */
+function toIntKg(x) {
+  return Math.round(Number(x) * 1000);
 }
 
 function checkIncrementConflict(lift) {
-  const increment = userData.step[lift];
-  const plates = userData.plateConfig[lift];
-  if (!plates.length) return null;
+  const increment = Number(userData.step[lift]);
+  const plates = (userData.plateConfig[lift] || [])
+    .map(Number)
+    .filter(n => Number.isFinite(n));
+
+  if (!Number.isFinite(increment) || plates.length === 0) return null;
 
   const minPlate = Math.min(...plates);
   const minStep = minPlate * 2;
 
-  if (increment % minStep !== 0) {
-    return `⚠️ ${lift.toUpperCase()}:\nIncrement ${increment}kg は\n最小プレート ${minPlate}kg 構成では刻めません`;
+  const incI = toIntKg(increment);
+  const stepI = toIntKg(minStep);
+
+  if (stepI === 0) return null;
+
+  if (incI % stepI !== 0) {
+    return `⚠️ ${lift.toUpperCase()}:\nIncrement ${increment}kg is incompatible with selected plates.\nSmallest possible step is ${minStep}kg (min plate ${minPlate}kg per side).`;
   }
   return null;
 }
 
 function saveData(){
-  userData.max.sq=parseFloat(document.getElementById('set-sq').value);
-  userData.max.bp=parseFloat(document.getElementById('set-bp').value);
-  userData.max.dl=parseFloat(document.getElementById('set-dl').value);
-  userData.step.sq=parseFloat(document.getElementById('step-sq').value);
-  userData.step.bp=parseFloat(document.getElementById('step-bp').value);
-  userData.step.dl=parseFloat(document.getElementById('step-dl').value);
+  userData.max.sq = parseFloat(document.getElementById('set-sq').value);
+  userData.max.bp = parseFloat(document.getElementById('set-bp').value);
+  userData.max.dl = parseFloat(document.getElementById('set-dl').value);
+
+  userData.step.sq = parseFloat(document.getElementById('step-sq').value);
+  userData.step.bp = parseFloat(document.getElementById('step-bp').value);
+  userData.step.dl = parseFloat(document.getElementById('step-dl').value);
 
   ['sq','bp','dl'].forEach(l=>{
-    userData.plateConfig[l]=Array.from(
+    userData.plateConfig[l] = Array.from(
       document.querySelectorAll(`#plates-${l} input:checked`)
-    ).map(b=>parseFloat(b.value));
+    ).map(b => parseFloat(b.value));
   });
 
-  localStorage.setItem('liftingData_v4',JSON.stringify(userData));
+  localStorage.setItem('liftingData_v4', JSON.stringify(userData));
 
   const warnings = ['sq','bp','dl']
     .map(checkIncrementConflict)
     .filter(Boolean);
 
-  if (warnings.length) {
-    alert(warnings.join('\n\n'));
-  }
+  if (warnings.length) alert(warnings.join('\n\n'));
 
   calculate();
   showView('calc');
 }
 
+/* ===== Tabs ===== */
 function showView(v){
   document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));
   document.querySelectorAll('.tab-item').forEach(e=>e.classList.remove('active'));
@@ -363,23 +424,25 @@ function showView(v){
   document.getElementById(`tab-${v}`).classList.add('active');
 }
 
+/* ===== Init ===== */
 function init(){
-  const rpeList=[10,9.5,9,8.5,8,7.5,7,6.5,6,5,4,3,2,1];
+  const rpeList = [10,9.5,9,8.5,8,7.5,7,6.5,6,5,4,3,2,1];
   document.getElementById('rpe-select').innerHTML =
-    rpeList.map(v=>`<option value="${v}" ${v===8?'selected':''}>RPE ${v}</option>`).join('');
+    rpeList.map(v => `<option value="${v}" ${v===8 ? 'selected' : ''}>RPE ${v}</option>`).join('');
 
-  document.getElementById('set-sq').value=userData.max.sq;
-  document.getElementById('set-bp').value=userData.max.bp;
-  document.getElementById('set-dl').value=userData.max.dl;
-  document.getElementById('step-sq').value=userData.step.sq;
-  document.getElementById('step-bp').value=userData.step.bp;
-  document.getElementById('step-dl').value=userData.step.dl;
+  document.getElementById('set-sq').value = userData.max.sq;
+  document.getElementById('set-bp').value = userData.max.bp;
+  document.getElementById('set-dl').value = userData.max.dl;
+
+  document.getElementById('step-sq').value = userData.step.sq;
+  document.getElementById('step-bp').value = userData.step.bp;
+  document.getElementById('step-dl').value = userData.step.dl;
 
   ['sq','bp','dl'].forEach(renderPlateSettings);
   calculate();
 }
 
-window.onload=init;
+window.onload = init;
 </script>
 </body>
 </html>
